@@ -88,13 +88,15 @@ class CLINT extends Module {
    */
 
   // ================== lab2(CLINTCSR) ==================
-  // MIE 位在 mstatus 的第 3 位
+  // 1. 获取中断使能状态 (MIE 位在 mstatus 的第 3 位)
 
-  // 根据 CLINTCSRTest 的期望，MEPC 均设置为下一条指令地址 (PC + 4)
-  val current_pc = io.instruction_address
-  val next_pc = current_pc + 4.U
+  // 2. 确定返回地址 (MEPC)
+  // 关键修复：直接使用类开头定义的 instruction_address 变量。
+  // 该变量已经包含了跳转逻辑：Mux(io.jump_flag, io.jump_address, io.instruction_address + 4.U)
+  // 如果这里只用 io.instruction_address + 4.U，就会导致跳转时的中断返回地址错误。
+  val next_pc = instruction_address
 
-  // 默认不请求写 CSR，也不跳转
+  // 3. 默认输出配置
   io.csr_bundle.mstatus_write_data := io.csr_bundle.mstatus
   io.csr_bundle.mepc_write_data := io.csr_bundle.mepc
   io.csr_bundle.mcause_write_data := io.csr_bundle.mcause
@@ -102,32 +104,70 @@ class CLINT extends Module {
   io.interrupt_assert := false.B
   io.interrupt_handler_address := 0.U
 
+  // 4. 中断/异常处理逻辑
   when(io.interrupt_flag =/= InterruptCode.None && interrupt_enable) {
-    // 处理外设中断
-    // mstatus 更新: MPP=11(Machine), MPIE=MIE(old), MIE=0
-    io.csr_bundle.mstatus_write_data := Cat(io.csr_bundle.mstatus(31, 13), 3.U(2.W), io.csr_bundle.mstatus(10, 8), io.csr_bundle.mstatus(3), io.csr_bundle.mstatus(6, 4), 0.U(1.W), io.csr_bundle.mstatus(2, 0))
-    io.csr_bundle.mepc_write_data := next_pc
-    io.csr_bundle.mcause_write_data := Mux(io.interrupt_flag(0), 0x80000007L.U, 0x8000000BL.U) // Timer or External
+    // --- 处理外设中断 (Timer / External) ---
+    io.csr_bundle.mepc_write_data := next_pc // 保存下一条指令地址(包含跳转目标)
+
+    // 设置 MCAUSE (Bit 31 = 1 表示中断，低位表示类型)
+    // 假设 interrupt_flag(0) 是 Timer 中断 (0x80000007)，否则是 External (0x8000000B)
+    io.csr_bundle.mcause_write_data := Mux(io.interrupt_flag(0), 0x80000007L.U, 0x8000000BL.U)
+
+    // 更新 MSTATUS:
+    // MPP(12:11)=11(Machine), MPIE(7)=MIE(old), MIE(3)=0
+    io.csr_bundle.mstatus_write_data := Cat(
+      io.csr_bundle.mstatus(31, 13),
+      3.U(2.W),                      // MPP = 11 (Machine Mode)
+      io.csr_bundle.mstatus(10, 8),
+      io.csr_bundle.mstatus(3),      // MPIE = 旧的 MIE
+      io.csr_bundle.mstatus(6, 4),
+      0.U(1.W),                      // MIE = 0 (关中断)
+      io.csr_bundle.mstatus(2, 0)
+    )
+
     io.csr_bundle.direct_write_enable := true.B
     io.interrupt_assert := true.B
     io.interrupt_handler_address := io.csr_bundle.mtvec
   }
     .elsewhen(io.instruction === InstructionsEnv.ecall || io.instruction === InstructionsEnv.ebreak) {
-      // 处理环境调用和断点异常
-      // mstatus 更新同上
-      io.csr_bundle.mstatus_write_data := Cat(io.csr_bundle.mstatus(31, 13), 3.U(2.W), io.csr_bundle.mstatus(10, 8), io.csr_bundle.mstatus(3), io.csr_bundle.mstatus(6, 4), 0.U(1.W), io.csr_bundle.mstatus(2, 0))
-      io.csr_bundle.mepc_write_data := next_pc
-      io.csr_bundle.mcause_write_data := Mux(io.instruction === InstructionsEnv.ecall, 11.U, 3.U) // 11=M-mode Ecall, 3=Breakpoint
+      // --- 处理同步异常 (Ecall / Ebreak) ---
+      io.csr_bundle.mepc_write_data := next_pc // 异常返回地址
+
+      // 设置 MCAUSE: Ecall(11), Ebreak(3)
+      // 注意：异常的 MCAUSE 最高位为 0
+      io.csr_bundle.mcause_write_data := Mux(io.instruction === InstructionsEnv.ecall, 11.U, 3.U)
+
+      // MSTATUS 更新同上
+      io.csr_bundle.mstatus_write_data := Cat(
+        io.csr_bundle.mstatus(31, 13),
+        3.U(2.W),
+        io.csr_bundle.mstatus(10, 8),
+        io.csr_bundle.mstatus(3),
+        io.csr_bundle.mstatus(6, 4),
+        0.U(1.W),
+        io.csr_bundle.mstatus(2, 0)
+      )
+
       io.csr_bundle.direct_write_enable := true.B
       io.interrupt_assert := true.B
       io.interrupt_handler_address := io.csr_bundle.mtvec
     }
     .elsewhen(io.instruction === InstructionsRet.mret) {
-      // 处理 mret 返回
-      // mstatus 更新: MIE=MPIE(old), MPIE=1, MPP=11
-      io.csr_bundle.mstatus_write_data := Cat(io.csr_bundle.mstatus(31, 13), 3.U(2.W), io.csr_bundle.mstatus(10, 8), 1.U(1.W), io.csr_bundle.mstatus(6, 4), io.csr_bundle.mstatus(7), io.csr_bundle.mstatus(2, 0))
+      // --- 处理中断返回 (mret) ---
+      // 恢复状态: MIE=MPIE, MPIE=1, MPP=11(或保持不变/恢复为U模式，此处简化设为11)
+      io.csr_bundle.mstatus_write_data := Cat(
+        io.csr_bundle.mstatus(31, 13),
+        3.U(2.W),                      // MPP
+        io.csr_bundle.mstatus(10, 8),
+        1.U(1.W),                      // MPIE = 1
+        io.csr_bundle.mstatus(6, 4),
+        io.csr_bundle.mstatus(7),      // MIE = 旧的 MPIE
+        io.csr_bundle.mstatus(2, 0)
+      )
+
       io.csr_bundle.direct_write_enable := true.B
       io.interrupt_assert := true.B
+      // 返回到 MEPC 指定的地址
       io.interrupt_handler_address := io.csr_bundle.mepc
     }
   // ================== lab2(CLINTCSR) End ==================
