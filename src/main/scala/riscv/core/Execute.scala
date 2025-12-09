@@ -14,6 +14,7 @@
 
 package riscv.core
 
+import Chisel.{is, switch}
 import chisel3._
 import chisel3.util.{Cat, MuxLookup}
 import riscv.Parameters
@@ -76,69 +77,40 @@ class Execute extends Module {
   /*
   io.csr_reg_write_data :=
   */
-  // ================== lab2(CLINTCSR)：CSR 指令运算 ==================
-  // rs1 字段（既是寄存器编号，也是 *I 指令里的 5bit 立即数 zimm）
+  // ================== lab2(CLINTCSR) ==================
+  // 处理 CSR 指令的运算逻辑
   val rs1 = io.instruction(19, 15)
+  val uimm = rs1 // 立即数模式下，rs1 字段即为无符号立即数 zimm
 
-  // 这是 CSR 指令吗？
-  val isCSR = opcode === "h73".U(7.W)
+  // 这里的 zimm 需要先扩展到 32 位，否则取反操作 ~ 只能作用于 5 位
+  val zimmExtended = Wire(UInt(Parameters.DataWidth))
+  zimmExtended := uimm.asUInt
 
-  // 立即数版本用到的 zimm（5bit），在位运算时会自动零扩展
-  val zimm = rs1.asUInt
-
-  // 默认写回 0（非 CSR 指令时不会用到）
   io.csr_reg_write_data := 0.U
 
-  when(isCSR) {
-    // ---------- CSRRW：csr <- rs1 ----------
-    when(funct3 === InstructionsTypeCSR.csrrw) {
+  // 根据 func3 区分 CSR 指令类型
+  switch(funct3) {
+    is(InstructionsTypeCSR.csrrw) {
       io.csr_reg_write_data := io.reg1_data
     }
-
-      // ---------- CSRRS：csr <- csr | rs1 （rs1=0 只读） ----------
-      .elsewhen(funct3 === InstructionsTypeCSR.csrrs) {
-        io.csr_reg_write_data := Mux(
-          io.reg1_data =/= 0.U,
-          io.csr_reg_read_data | io.reg1_data,
-          io.csr_reg_read_data
-        )
-      }
-
-      // ---------- CSRRC：csr <- csr & ~rs1 （rs1=0 只读） ----------
-      .elsewhen(funct3 === InstructionsTypeCSR.csrrc) {
-        io.csr_reg_write_data := Mux(
-          io.reg1_data =/= 0.U,
-          io.csr_reg_read_data & (~io.reg1_data).asUInt,
-          io.csr_reg_read_data
-        )
-      }
-
-      // ---------- CSRRWI：csr <- zimm ----------
-      .elsewhen(funct3 === InstructionsTypeCSR.csrrwi) {
-        val zimmExt = zimm   // 5bit，Chisel 自动零扩展到 DataWidth
-        io.csr_reg_write_data := zimmExt
-      }
-
-      // ---------- CSRRSI：csr <- csr | zimm （zimm=0 只读） ----------
-      .elsewhen(funct3 === InstructionsTypeCSR.csrrsi) {
-        val zimmExt = zimm
-        io.csr_reg_write_data := Mux(
-          zimmExt =/= 0.U,
-          io.csr_reg_read_data | zimmExt,
-          io.csr_reg_read_data
-        )
-      }
-
-      // ---------- CSRRCI：csr <- csr & ~zimm （zimm=0 只读） ----------
-      .elsewhen(funct3 === InstructionsTypeCSR.csrrci) {
-        val zimmExt = zimm                      // 低 5 位是立即数，其余位自动补 0
-        io.csr_reg_write_data := Mux(
-          zimmExt =/= 0.U,
-          io.csr_reg_read_data & (~zimmExt).asUInt,
-          io.csr_reg_read_data
-        )
-      }
+    is(InstructionsTypeCSR.csrrs) {
+      // rs1 = 0 时不写入（即不修改 CSR），但为了逻辑统一，Mux 判断是否为 0
+      io.csr_reg_write_data := Mux(rs1 =/= 0.U, io.csr_reg_read_data | io.reg1_data, io.csr_reg_read_data)
+    }
+    is(InstructionsTypeCSR.csrrc) {
+      io.csr_reg_write_data := Mux(rs1 =/= 0.U, io.csr_reg_read_data & (~io.reg1_data).asUInt, io.csr_reg_read_data)
+    }
+    is(InstructionsTypeCSR.csrrwi) {
+      io.csr_reg_write_data := zimmExtended
+    }
+    is(InstructionsTypeCSR.csrrsi) {
+      io.csr_reg_write_data := Mux(uimm =/= 0.U, io.csr_reg_read_data | zimmExtended, io.csr_reg_read_data)
+    }
+    is(InstructionsTypeCSR.csrrci) {
+      // 关键修正：先扩展再取反
+      io.csr_reg_write_data := Mux(uimm =/= 0.U, io.csr_reg_read_data & (~zimmExtended).asUInt, io.csr_reg_read_data)
+    }
   }
-  // ================== lab2(CLINTCSR) 结束 ==================
+  // ================== lab2(CLINTCSR) End ==================
 
 }

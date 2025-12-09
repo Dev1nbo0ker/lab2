@@ -33,52 +33,41 @@ class Timer extends Module {
   val enabled = RegInit(true.B)
   io.debug_enabled := enabled
 
-  //lab2(CLINTCSR)
+  // ================== lab2(CLINTCSR) ==================
   //finish the read-write for count,limit,enabled. And produce appropriate signal_interrupt
-  // 只用低 4 位做内部寄存器寻址
-  val localAddr = io.bundle.address(3, 0)
+  // Timer MMIO 读写与中断逻辑
 
-  // 三个寄存器的偏移
-  val ADDR_COUNT  = "h0".U(4.W)  // 当前计数
-  val ADDR_LIMIT  = "h4".U(4.W)  // limit
-  val ADDR_ENABLE = "h8".U(4.W)  // enable
-
-  // -------- 读操作 --------
-  // 没有 read_enable，直接根据地址组合输出
-  io.bundle.read_data := MuxLookup(localAddr, 0.U, Array(
-    ADDR_COUNT  -> count,
-    ADDR_LIMIT  -> limit,
-    ADDR_ENABLE -> enabled.asUInt
+  // MMIO 读逻辑 (组合逻辑)
+  // 地址 0x4 -> limit, 0x8 -> enabled, 0x0 -> count (假设 count 在 offset 0)
+  io.bundle.read_data := MuxLookup(io.bundle.address(3, 0), 0.U, Seq(
+    0.U -> count,
+    4.U -> limit,
+    8.U -> enabled.asUInt
   ))
 
-  // -------- 写操作 + 计数逻辑 --------
-  // 用一个 nextCount 线网来统一决定本拍写回的计数值
-  val nextCount = WireDefault(count)
+  // 计数与写逻辑
+  // 默认情况下，如果 enabled 为真，count 自增
+  val count_next = Mux(enabled, count + 1.U, count)
 
-  // 正常启用时自增
-  when (enabled) {
-    nextCount := count + 1.U
-  }
-
-  // 有写操作时，根据地址覆写寄存器
-  when (io.bundle.write_enable) {
-    switch(localAddr) {
-      is(ADDR_COUNT)  { nextCount := io.bundle.write_data }
-      is(ADDR_LIMIT)  { limit     := io.bundle.write_data }
-      is(ADDR_ENABLE) { enabled   := io.bundle.write_data(0) }
+  when(io.bundle.write_enable) {
+    switch(io.bundle.address(3, 0)) {
+      is(0.U) {
+        count := io.bundle.write_data
+      }
+      is(4.U) {
+        limit := io.bundle.write_data
+        count := count_next // 写 limit 时，count 仍需根据 enable 状态更新
+      }
+      is(8.U) {
+        enabled := io.bundle.write_data =/= 0.U
+        count := count_next
+      }
     }
+  }.otherwise {
+    count := count_next
   }
 
-  // 最后统一更新 count
-  count := nextCount
-
-  // -------- 中断信号 --------
-  // 计数到达 limit，且 enable=1 时产生中断
-  val hitLimit      = enabled && (count === limit)
-  val interruptReg  = RegInit(false.B)
-
-  // 让中断信号至少保持 1 个周期
-  interruptReg := hitLimit
-  io.signal_interrupt := interruptReg
-  // lab2(CLINTCSR) end
+  // 中断逻辑：计数器达到 limit 且使能时触发
+  io.signal_interrupt := enabled && (count >= limit)
+  // ================== lab2(CLINTCSR) End ==================
 }

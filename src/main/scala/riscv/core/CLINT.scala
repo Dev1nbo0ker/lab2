@@ -87,70 +87,50 @@ class CLINT extends Module {
   }
    */
 
-  // 1. 从 mstatus 中取出全局中断使能 MIE 位
-  // mstatus[3] = MIE, mstatus[7] = MPIE
+  // ================== lab2(CLINTCSR) ==================
+  // MIE 位在 mstatus 的第 3 位
 
-  // 2. 有外设中断 (interrupt_flag != None) 且 MIE=1，则进入中断入口
-  when (io.interrupt_flag =/= InterruptCode.None && interrupt_enable) {
-    // 关中断：MIE ← 0, MPIE ← 1，特权级设置为 M 模式（这里简单写成固定 11）
-    io.csr_bundle.mstatus_write_data :=
-      Cat(
-        io.csr_bundle.mstatus(31,13),  // 高位保持
-        3.U(2.W),                      // MPP = 11 (Machine mode)
-        io.csr_bundle.mstatus(10,4),   // 其它位保持
-        0.U(1.W),                      // MIE = 0，关中断
-        io.csr_bundle.mstatus(2,0)     // 低 3 位保持
-      )
+  // 根据 CLINTCSRTest 的期望，MEPC 均设置为下一条指令地址 (PC + 4)
+  val current_pc = io.instruction_address
+  val next_pc = current_pc + 4.U
 
-    // 保存返回地址：注意是“下一条要执行的 PC”
-    val instruction_address = io.instruction_address+4.U
-    io.csr_bundle.mepc_write_data := instruction_address
+  // 默认不请求写 CSR，也不跳转
+  io.csr_bundle.mstatus_write_data := io.csr_bundle.mstatus
+  io.csr_bundle.mepc_write_data := io.csr_bundle.mepc
+  io.csr_bundle.mcause_write_data := io.csr_bundle.mcause
+  io.csr_bundle.direct_write_enable := false.B
+  io.interrupt_assert := false.B
+  io.interrupt_handler_address := 0.U
 
-    // 根据 interrupt_flag 判断是 Timer 中断还是其他中断
-    io.csr_bundle.mcause_write_data := Mux(
-      io.interrupt_flag(0),     // 比如约定 bit0=Timer
-      "h80000007".U,            // Machine timer interrupt
-      "h8000000B".U             // Machine external/software interrupt
-    )
-
+  when(io.interrupt_flag =/= InterruptCode.None && interrupt_enable) {
+    // 处理外设中断
+    // mstatus 更新: MPP=11(Machine), MPIE=MIE(old), MIE=0
+    io.csr_bundle.mstatus_write_data := Cat(io.csr_bundle.mstatus(31, 13), 3.U(2.W), io.csr_bundle.mstatus(10, 8), io.csr_bundle.mstatus(3), io.csr_bundle.mstatus(6, 4), 0.U(1.W), io.csr_bundle.mstatus(2, 0))
+    io.csr_bundle.mepc_write_data := next_pc
+    io.csr_bundle.mcause_write_data := Mux(io.interrupt_flag(0), 0x80000007L.U, 0x8000000BL.U) // Timer or External
     io.csr_bundle.direct_write_enable := true.B
     io.interrupt_assert := true.B
-    // 跳转到 mtvec
     io.interrupt_handler_address := io.csr_bundle.mtvec
   }
-
-    // 3. 遇到 mret 指令：从中断返回
-    .elsewhen (io.instruction === InstructionsRet.mret) {
-      // 恢复 MIE：MIE ← 1, 继续保持 MPP=11（本实验只跑 M-mode）
-      io.csr_bundle.mstatus_write_data :=
-        Cat(
-          io.csr_bundle.mstatus(31,13),
-          3.U(2.W),
-          io.csr_bundle.mstatus(10,4),
-          1.U(1.W),                  // MIE = 1，开中断
-          io.csr_bundle.mstatus(2,0)
-        )
-
-      // MEPC / MCAUSE 保持原样（这里不需要修改）
-      io.csr_bundle.mepc_write_data   := io.csr_bundle.mepc
-      io.csr_bundle.mcause_write_data := io.csr_bundle.mcause
-
+    .elsewhen(io.instruction === InstructionsEnv.ecall || io.instruction === InstructionsEnv.ebreak) {
+      // 处理环境调用和断点异常
+      // mstatus 更新同上
+      io.csr_bundle.mstatus_write_data := Cat(io.csr_bundle.mstatus(31, 13), 3.U(2.W), io.csr_bundle.mstatus(10, 8), io.csr_bundle.mstatus(3), io.csr_bundle.mstatus(6, 4), 0.U(1.W), io.csr_bundle.mstatus(2, 0))
+      io.csr_bundle.mepc_write_data := next_pc
+      io.csr_bundle.mcause_write_data := Mux(io.instruction === InstructionsEnv.ecall, 11.U, 3.U) // 11=M-mode Ecall, 3=Breakpoint
       io.csr_bundle.direct_write_enable := true.B
       io.interrupt_assert := true.B
-      // mret 返回地址就是 mepc
+      io.interrupt_handler_address := io.csr_bundle.mtvec
+    }
+    .elsewhen(io.instruction === InstructionsRet.mret) {
+      // 处理 mret 返回
+      // mstatus 更新: MIE=MPIE(old), MPIE=1, MPP=11
+      io.csr_bundle.mstatus_write_data := Cat(io.csr_bundle.mstatus(31, 13), 3.U(2.W), io.csr_bundle.mstatus(10, 8), 1.U(1.W), io.csr_bundle.mstatus(6, 4), io.csr_bundle.mstatus(7), io.csr_bundle.mstatus(2, 0))
+      io.csr_bundle.direct_write_enable := true.B
+      io.interrupt_assert := true.B
       io.interrupt_handler_address := io.csr_bundle.mepc
     }
-
-    // 4. 普通情况：既没有中断发生，也不是 mret
-    .otherwise {
-      io.csr_bundle.mstatus_write_data := io.csr_bundle.mstatus
-      io.csr_bundle.mepc_write_data    := io.csr_bundle.mepc
-      io.csr_bundle.mcause_write_data  := io.csr_bundle.mcause
-
-      io.csr_bundle.direct_write_enable := false.B
-      io.interrupt_assert := false.B
-      io.interrupt_handler_address := io.csr_bundle.mtvec // don't care
-    }
+  // ================== lab2(CLINTCSR) End ==================
 
 
 }

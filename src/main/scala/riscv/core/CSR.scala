@@ -79,29 +79,13 @@ class CSR extends Module {
   io.clint_access_bundle.mepc :=
   */
 
-  // 如果本周期流水线要写某个 CSR，就把写入的数据直接“前递”给 CLINT，
-  // 否则 CLINT 看到的是当前寄存器中的值。
-  io.clint_access_bundle.mstatus := Mux(
-    io.reg_write_enable_id && io.reg_write_address_id === CSRRegister.MSTATUS,
-    io.reg_write_data_ex,
-    mstatus
-  )
-  io.clint_access_bundle.mtvec := Mux(
-    io.reg_write_enable_id && io.reg_write_address_id === CSRRegister.MTVEC,
-    io.reg_write_data_ex,
-    mtvec
-  )
-  io.clint_access_bundle.mcause := Mux(
-    io.reg_write_enable_id && io.reg_write_address_id === CSRRegister.MCAUSE,
-    io.reg_write_data_ex,
-    mcause
-  )
-  io.clint_access_bundle.mepc := Mux(
-    io.reg_write_enable_id && io.reg_write_address_id === CSRRegister.MEPC,
-    io.reg_write_data_ex,
-    mepc
-  )
-  //lab2(CLINTCSR)-end
+  // 将 CSR 值传递给 CLINT。如果当前指令正在写对应的 CSR，直接将写数据前递给 CLINT，
+  // 否则 CLINT 读取的是当前周期的寄存器值。
+  io.clint_access_bundle.mstatus := Mux(io.reg_write_enable_id && io.reg_write_address_id === CSRRegister.MSTATUS, io.reg_write_data_ex, mstatus)
+  io.clint_access_bundle.mtvec := Mux(io.reg_write_enable_id && io.reg_write_address_id === CSRRegister.MTVEC, io.reg_write_data_ex, mtvec)
+  io.clint_access_bundle.mcause := Mux(io.reg_write_enable_id && io.reg_write_address_id === CSRRegister.MCAUSE, io.reg_write_data_ex, mcause)
+  io.clint_access_bundle.mepc := Mux(io.reg_write_enable_id && io.reg_write_address_id === CSRRegister.MEPC, io.reg_write_data_ex, mepc)
+  // ================== lab2(CLINTCSR) End ==================
 
   when(io.clint_access_bundle.direct_write_enable) {
     mstatus := io.clint_access_bundle.mstatus_write_data
