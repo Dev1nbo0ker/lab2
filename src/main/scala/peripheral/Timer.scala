@@ -52,6 +52,7 @@ class Timer extends Module {
   when(io.bundle.write_enable) {
     switch(io.bundle.address(3, 0)) {
       is(0.U) {
+        //CPU写入>自增逻辑
         count := io.bundle.write_data
       }
       is(4.U) {

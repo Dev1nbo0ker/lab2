@@ -89,11 +89,7 @@ class CLINT extends Module {
 
   // ================== lab2(CLINTCSR) ==================
   // 1. 获取中断使能状态 (MIE 位在 mstatus 的第 3 位)
-
   // 2. 确定返回地址 (MEPC)
-  // 关键修复：直接使用类开头定义的 instruction_address 变量。
-  // 该变量已经包含了跳转逻辑：Mux(io.jump_flag, io.jump_address, io.instruction_address + 4.U)
-  // 如果这里只用 io.instruction_address + 4.U，就会导致跳转时的中断返回地址错误。
   val next_pc = instruction_address
 
   // 3. 默认输出配置
@@ -124,7 +120,7 @@ class CLINT extends Module {
       0.U(1.W),                      // MIE = 0 (关中断)
       io.csr_bundle.mstatus(2, 0)
     )
-
+    //跳转到中断向量表地址
     io.csr_bundle.direct_write_enable := true.B
     io.interrupt_assert := true.B
     io.interrupt_handler_address := io.csr_bundle.mtvec

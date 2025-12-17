@@ -80,9 +80,9 @@ class Execute extends Module {
   // ================== lab2(CLINTCSR) ==================
   // 处理 CSR 指令的运算逻辑
   val rs1 = io.instruction(19, 15)
-  val uimm = rs1 // 立即数模式下，rs1 字段即为无符号立即数 zimm
+  val uimm = rs1 // 立即数模式下，寄存器rs1 字段即为无符号立即数 zimm
 
-  // 这里的 zimm 需要先扩展到 32 位，否则取反操作 ~ 只能作用于 5 位
+  // zimm 零扩展到 32 位，否则 ~ 只能作用于 5 位
   val zimmExtended = Wire(UInt(Parameters.DataWidth))
   zimmExtended := uimm.asUInt
 
@@ -91,23 +91,26 @@ class Execute extends Module {
   // 根据 func3 区分 CSR 指令类型
   switch(funct3) {
     is(InstructionsTypeCSR.csrrw) {
-      io.csr_reg_write_data := io.reg1_data
+      io.csr_reg_write_data := io.reg1_data //直接覆盖
     }
     is(InstructionsTypeCSR.csrrs) {
-      // rs1 = 0 时不写入（即不修改 CSR），但为了逻辑统一，Mux 判断是否为 0
+      // 置特定位为1
       io.csr_reg_write_data := Mux(rs1 =/= 0.U, io.csr_reg_read_data | io.reg1_data, io.csr_reg_read_data)
     }
     is(InstructionsTypeCSR.csrrc) {
+      //置特定位为0
       io.csr_reg_write_data := Mux(rs1 =/= 0.U, io.csr_reg_read_data & (~io.reg1_data).asUInt, io.csr_reg_read_data)
     }
     is(InstructionsTypeCSR.csrrwi) {
+      //立即数直接覆盖
       io.csr_reg_write_data := zimmExtended
     }
     is(InstructionsTypeCSR.csrrsi) {
+      //立即数置位1
       io.csr_reg_write_data := Mux(uimm =/= 0.U, io.csr_reg_read_data | zimmExtended, io.csr_reg_read_data)
     }
     is(InstructionsTypeCSR.csrrci) {
-      // 关键修正：先扩展再取反
+      // 立即数清楚
       io.csr_reg_write_data := Mux(uimm =/= 0.U, io.csr_reg_read_data & (~zimmExtended).asUInt, io.csr_reg_read_data)
     }
   }

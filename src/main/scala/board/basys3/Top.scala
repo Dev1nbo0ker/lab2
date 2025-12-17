@@ -101,6 +101,8 @@ class Top extends Module {
 
   display.io.x := vga_display.io.x
   display.io.y := vga_display.io.y
+  display.io.video_on := vga_display.io.video_on
+
 
   io.hsync := vga_display.io.hsync
   io.vsync := vga_display.io.vsync

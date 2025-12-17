@@ -112,5 +112,5 @@ class VGADisplay extends Module {
   io.vsync := sync.io.vsync
   io.x := sync.io.x
   io.y := sync.io.y
-  io.video_on := sync.io.y
+  io.video_on := sync.io.video_on
 }
